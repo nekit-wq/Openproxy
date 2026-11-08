@@ -68,27 +68,6 @@ kotlin {
     }
 }
 
-tasks.register("downloadLibbox") {
-    val dest = file("libs/libbox.aar")
-    outputs.file(dest)
-    doLast {
-        if (!dest.exists()) {
-            dest.parentFile.mkdirs()
-            println("Downloading libbox.aar...")
-            java.net.URI("https://github.com/Vauth/sing-box/releases/download/v1.0.0-masque/libbox.aar")
-                .toURL()
-                .openStream()
-                .use { input ->
-                    java.nio.file.Files.copy(input, dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-                }
-            println("libbox.aar downloaded successfully")
-        }
-    }
-}
-tasks.matching { it.name.startsWith("preBuild") }.configureEach {
-    dependsOn("downloadLibbox")
-}
-
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
