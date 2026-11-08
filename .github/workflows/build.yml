@@ -1,0 +1,81 @@
+name: OpenProxy Build & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Platform 37
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+          ln -sfn android-37.0 "${ANDROID_HOME}/platforms/android-37"
+
+      - name: Download sing-box core (libbox.aar)
+        run: |
+          mkdir -p app/libs
+          if [ ! -f app/libs/libbox.aar ]; then
+            gh release download v1.0.0-masque --repo Vauth/sing-box --pattern "libbox.aar" --dir app/libs --clobber
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug & Release APKs
+        run: |
+          ./gradlew assembleDebug assembleRelease --stacktrace
+
+      - name: Rename APKs for clarity
+        run: |
+          mkdir -p build-apks
+          find app/build/outputs/apk/ -name "*.apk" -type f | while read -r apk; do
+            filename=$(basename "$apk")
+            cp "$apk" "build-apks/OpenProxy-$filename"
+          done
+          ls -lh build-apks/
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenProxy-APKs
+          path: build-apks/*.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "OpenProxy ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+          files: build-apks/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
