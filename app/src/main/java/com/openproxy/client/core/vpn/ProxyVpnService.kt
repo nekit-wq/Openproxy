@@ -359,8 +359,6 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     override fun startNeighborMonitor(listener: io.nekohasekai.libbox.NeighborUpdateListener?) = Unit
 
-    override fun systemCertificates(): StringIterator? = null
-
     override fun tailscaleHostname(): String = ""
 
     override fun underNetworkExtension(): Boolean = false

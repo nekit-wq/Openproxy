@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.openproxy.client"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.openproxy.client"
