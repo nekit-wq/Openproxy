@@ -123,4 +123,139 @@ class ShareLinkParserTest {
         assertTrue(batch.isEmpty)
         assertTrue(batch.errors.any { it.contains("App not supported") })
     }
+
+    @Test
+    fun detectsDeepLinkSubscriptions() {
+        val target = "https://sub.example.com/api/v1/client/subscribe?token=abc123xyz"
+
+        val v2rayng = ImportDetector.detect("v2rayng://install-config?url=https%3A%2F%2Fsub.example.com%2Fapi%2Fv1%2Fclient%2Fsubscribe%3Ftoken%3Dabc123xyz")
+        assertTrue(v2rayng is ImportSource.Subscription)
+        assertEquals(target, (v2rayng as ImportSource.Subscription).url)
+
+        val clash = ImportDetector.detect("clash://install-config?url=https%3A%2F%2Fsub.example.com%2Fapi%2Fv1%2Fclient%2Fsubscribe%3Ftoken%3Dabc123xyz")
+        assertTrue(clash is ImportSource.Subscription)
+        assertEquals(target, (clash as ImportSource.Subscription).url)
+
+        val singbox = ImportDetector.detect("sing-box://import-remote-profile?url=https%3A%2F%2Fsub.example.com%2Fapi%2Fv1%2Fclient%2Fsubscribe%3Ftoken%3Dabc123xyz")
+        assertTrue(singbox is ImportSource.Subscription)
+        assertEquals(target, (singbox as ImportSource.Subscription).url)
+
+        val subBase64 = "sub://" + Base64.getEncoder().encodeToString(target.toByteArray())
+        val sub = ImportDetector.detect(subBase64)
+        assertTrue(sub is ImportSource.Subscription)
+        assertEquals(target, (sub as ImportSource.Subscription).url)
+
+        val domainUrl = ImportDetector.detect("sub.example.com/api/v1/client/subscribe?token=abc123xyz")
+        assertTrue(domainUrl is ImportSource.Subscription)
+        assertEquals(target, (domainUrl as ImportSource.Subscription).url)
+
+        val embedded = ImportDetector.detect("Ваша подписка: $target\nСпасибо за покупку!")
+        assertTrue(embedded is ImportSource.Subscription)
+        assertEquals(target, (embedded as ImportSource.Subscription).url)
+    }
+
+    @Test
+    fun parsesClashYamlInSubscription() {
+        val yaml = """
+            port: 7890
+            socks-port: 7891
+            proxies:
+              - name: "Clash VLESS Reality"
+                type: vless
+                server: 198.51.100.1
+                port: 443
+                uuid: 11111111-2222-3333-4444-555555555555
+                network: tcp
+                tls: true
+                reality-opts:
+                  public-key: CLASH_PUB_KEY
+                  short-id: 1234abcd
+                servername: clash.example.com
+              - name: "Clash Trojan"
+                type: trojan
+                server: 198.51.100.2
+                port: 443
+                password: secretpassword
+                sni: trojan.example.com
+        """.trimIndent()
+
+        val batch = SubscriptionParser.parseBody(yaml)
+        assertEquals(2, batch.profiles.size)
+        val vless = batch.profiles[0]
+        assertEquals("Clash VLESS Reality", vless.name)
+        assertEquals(Protocol.VLESS, vless.protocol)
+        assertEquals("198.51.100.1", vless.address)
+        assertEquals(443, vless.port)
+        assertEquals("reality", vless.security)
+        assertEquals("CLASH_PUB_KEY", vless.publicKey)
+        assertEquals("clash.example.com", vless.sni)
+
+        val trojan = batch.profiles[1]
+        assertEquals("Clash Trojan", trojan.name)
+        assertEquals(Protocol.TROJAN, trojan.protocol)
+        assertEquals("198.51.100.2", trojan.address)
+        assertEquals("secretpassword", trojan.password)
+    }
+
+    @Test
+    fun parsesBase64ClashYamlInSubscription() {
+        val yaml = """
+            proxies:
+              - name: "B64 VLESS"
+                type: vless
+                server: 198.51.100.3
+                port: 443
+                uuid: 11111111-2222-3333-4444-555555555555
+                network: ws
+                tls: true
+                ws-opts:
+                  path: /ws
+        """.trimIndent()
+        val encoded = Base64.getEncoder().encodeToString(yaml.toByteArray())
+        val batch = SubscriptionParser.parseBody(encoded)
+        assertEquals(1, batch.profiles.size)
+        assertEquals("B64 VLESS", batch.profiles[0].name)
+        assertEquals(Protocol.VLESS, batch.profiles[0].protocol)
+        assertEquals("ws", batch.profiles[0].network)
+        assertEquals("/ws", batch.profiles[0].path)
+    }
+
+    @Test
+    fun parsesSingBoxJsonArrayInSubscription() {
+        val jsonArray = """
+            [
+              {
+                "type": "vless",
+                "tag": "SingBox Array Node",
+                "server": "singbox.example.com",
+                "server_port": 8443,
+                "uuid": "22222222-3333-4444-5555-666666666666",
+                "tls": {
+                  "enabled": true,
+                  "server_name": "singbox.example.com"
+                }
+              }
+            ]
+        """.trimIndent()
+
+        val batch = SubscriptionParser.parseBody(jsonArray)
+        assertEquals(1, batch.profiles.size)
+        val profile = batch.profiles[0]
+        assertEquals("SingBox Array Node", profile.name)
+        assertEquals(Protocol.VLESS, profile.protocol)
+        assertEquals("singbox.example.com", profile.address)
+        assertEquals(8443, profile.port)
+        assertEquals("tls", profile.security)
+    }
+
+    @Test
+    fun parsesSanitizedLinksWithAmpersandAndRemarks() {
+        val raw = "<vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality&amp;sni=www.google.com&amp;remarks=Sanitized%20Node>"
+        val profile = ShareLinkParser.parseLink(raw)
+        assertNotNull(profile)
+        requireNotNull(profile)
+        assertEquals("Sanitized Node", profile.name)
+        assertEquals("www.google.com", profile.sni)
+        assertEquals("reality", profile.security)
+    }
 }

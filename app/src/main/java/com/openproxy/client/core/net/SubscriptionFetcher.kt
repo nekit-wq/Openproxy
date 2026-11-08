@@ -28,41 +28,81 @@ class SubscriptionFetcher(
             else -> "https://$trimmed"
         }
 
-        val requestBuilder = Request.Builder()
-            .url(normalizedUrl)
-            .header("User-Agent", userAgent.ifBlank { DEFAULT_USER_AGENT })
-            .header("Accept", "*/*")
-            .header("Accept-Language", "ru,en;q=0.9")
-
-        if (deviceId.isNotBlank()) {
-            // Remnawave and similar panels require HWID device headers
-            requestBuilder.header("x-hwid", deviceId)
-            requestBuilder.header("x-device-os", "Android")
-            requestBuilder.header("x-ver-os", runCatching { Build.VERSION.RELEASE }.getOrNull() ?: "14")
-            requestBuilder.header("x-device-model", runCatching { Build.MODEL }.getOrNull() ?: "Android")
+        val primaryUa = when {
+            normalizedUrl.contains("clash", ignoreCase = true) -> CLASH_USER_AGENT
+            normalizedUrl.contains("sing-box", ignoreCase = true) || normalizedUrl.contains("singbox", ignoreCase = true) -> SINGBOX_USER_AGENT
+            else -> userAgent.ifBlank { DEFAULT_USER_AGENT }
         }
 
-        client.newCall(requestBuilder.build()).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("Сервер вернул HTTP ${response.code}")
-            }
-            val body = response.body?.string().orEmpty()
-            val headers = buildMap {
-                for (name in response.headers.names()) {
-                    put(name.lowercase(), response.headers[name].orEmpty())
+        val candidates = linkedSetOf<String>()
+        candidates.add(primaryUa)
+        candidates.add(DEFAULT_USER_AGENT)
+        candidates.add(CLASH_USER_AGENT)
+        candidates.add(SINGBOX_USER_AGENT)
+
+        var lastError: Exception? = null
+        for ((index, ua) in candidates.withIndex()) {
+            val isLast = index == candidates.size - 1
+            try {
+                val requestBuilder = Request.Builder()
+                    .url(normalizedUrl)
+                    .header("User-Agent", ua)
+                    .header("Accept", "*/*")
+                    .header("Accept-Language", "ru,en;q=0.9")
+
+                if (deviceId.isNotBlank()) {
+                    // Remnawave and similar panels require HWID device headers
+                    requestBuilder.header("x-hwid", deviceId)
+                    requestBuilder.header("x-device-os", "Android")
+                    requestBuilder.header("x-ver-os", runCatching { Build.VERSION.RELEASE }.getOrNull() ?: "14")
+                    requestBuilder.header("x-device-model", runCatching { Build.MODEL }.getOrNull() ?: "Android")
                 }
+
+                val response = client.newCall(requestBuilder.build()).execute()
+                val code = response.code
+                val body = response.body?.string().orEmpty()
+                val headers = buildMap {
+                    for (name in response.headers.names()) {
+                        put(name.lowercase(), response.headers[name].orEmpty())
+                    }
+                }
+                val finalUrl = response.request.url.toString()
+                response.close()
+
+                val trimmedBody = body.trim()
+                val isRejected = trimmedBody.equals("app not supported", ignoreCase = true) ||
+                    trimmedBody.equals("app not suported", ignoreCase = true) ||
+                    (trimmedBody.contains("not support", ignoreCase = true) && !trimmedBody.contains("://") && !trimmedBody.contains("proxies:"))
+
+                if (!response.isSuccessful) {
+                    if (!isLast && (isRejected || code in 400..404)) {
+                        continue
+                    }
+                    error("Сервер вернул HTTP $code")
+                }
+
+                if (isRejected && !isLast) {
+                    continue
+                }
+
+                return@withContext Response(
+                    body = body,
+                    headers = headers,
+                    finalUrl = finalUrl,
+                )
+            } catch (e: Exception) {
+                lastError = e
+                if (isLast) throw e
             }
-            Response(
-                body = body,
-                headers = headers,
-                finalUrl = response.request.url.toString(),
-            )
         }
+        throw lastError ?: IllegalStateException("Не удалось загрузить подписку")
     }
 
     companion object {
         // v2rayNG UA is the universal standard recognized by Remnawave, Marzban, X-UI, V2Board, 3X-UI
         const val DEFAULT_USER_AGENT = "v2rayNG/1.8.12 (Linux; Android)"
+        const val CLASH_USER_AGENT = "ClashMeta/1.18.1"
+        const val SINGBOX_USER_AGENT = "sing-box/1.10.0 (Android)"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)

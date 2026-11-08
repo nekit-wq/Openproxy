@@ -195,20 +195,41 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler, C
     private fun startTrafficPolling() {
         trafficJob?.cancel()
         trafficJob = scope.launch {
+            val startRx = android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid())
+            val startTx = android.net.TrafficStats.getUidTxBytes(android.os.Process.myUid())
+            var lastRx = startRx
+            var lastTx = startTx
             val client = ClashApiClient(clashPort, clashSecret)
             var totalUp = 0L
             var totalDown = 0L
+
             while (isActive) {
                 try {
                     client.trafficFlow().collect { (up, down) ->
                         totalUp += up
                         totalDown += down
                         statusMutable.update { current ->
+                            val currentRx = android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid())
+                            val currentTx = android.net.TrafficStats.getUidTxBytes(android.os.Process.myUid())
+                            val effectiveDown = if (current.downlinkTotal > 0L) {
+                                current.downlinkTotal
+                            } else if (startRx >= 0L && currentRx >= startRx) {
+                                currentRx - startRx
+                            } else {
+                                totalDown
+                            }
+                            val effectiveUp = if (current.uplinkTotal > 0L) {
+                                current.uplinkTotal
+                            } else if (startTx >= 0L && currentTx >= startTx) {
+                                currentTx - startTx
+                            } else {
+                                totalUp
+                            }
                             current.copy(
                                 uplink = up,
                                 downlink = down,
-                                uplinkTotal = if (current.uplinkTotal > 0L) current.uplinkTotal else totalUp,
-                                downlinkTotal = if (current.downlinkTotal > 0L) current.downlinkTotal else totalDown,
+                                uplinkTotal = effectiveUp,
+                                downlinkTotal = effectiveDown,
                             )
                         }
                     }
@@ -216,7 +237,25 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler, C
                     if (t is kotlinx.coroutines.CancellationException) throw t
                     Log.d(TAG, "Clash traffic polling error: ${t.message}")
                 }
-                delay(1500)
+
+                // Fallback polling if Clash flow is inactive or disconnected
+                delay(1000)
+                val currentRx = android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid())
+                val currentTx = android.net.TrafficStats.getUidTxBytes(android.os.Process.myUid())
+                if (startRx >= 0L && currentRx >= startRx && startTx >= 0L && currentTx >= startTx) {
+                    val speedDown = if (lastRx >= 0L && currentRx >= lastRx) currentRx - lastRx else 0L
+                    val speedUp = if (lastTx >= 0L && currentTx >= lastTx) currentTx - lastTx else 0L
+                    lastRx = currentRx
+                    lastTx = currentTx
+                    statusMutable.update { current ->
+                        current.copy(
+                            uplink = if (current.uplink > 0L) current.uplink else speedUp,
+                            downlink = if (current.downlink > 0L) current.downlink else speedDown,
+                            uplinkTotal = if (current.uplinkTotal > 0L) current.uplinkTotal else (currentTx - startTx),
+                            downlinkTotal = if (current.downlinkTotal > 0L) current.downlinkTotal else (currentRx - startRx),
+                        )
+                    }
+                }
             }
         }
     }

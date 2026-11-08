@@ -34,18 +34,11 @@ object SubscriptionParser {
         }
         if (trimmed.equals("app not supported", ignoreCase = true) ||
             trimmed.equals("app not suported", ignoreCase = true) ||
-            (trimmed.contains("not support", ignoreCase = true) && !trimmed.contains("://"))
+            (trimmed.contains("not support", ignoreCase = true) && !trimmed.contains("://") && !trimmed.contains("proxies:"))
         ) {
             return ParseBatch(
                 errors = listOf(
                     "Сервер подписки отклонил запрос (App not supported). Панель требует поддерживаемый клиент или превышен лимит устройств HWID.",
-                ),
-            )
-        }
-        if (CLASH_PROXIES.containsMatchIn(trimmed)) {
-            return ParseBatch(
-                errors = listOf(
-                    "Подписка в формате Clash YAML пока не поддерживается. Используйте ссылку на base64-подписку.",
                 ),
             )
         }
@@ -103,6 +96,4 @@ object SubscriptionParser {
             supportUrl = normalized["support-url"].orEmpty(),
         )
     }
-
-    private val CLASH_PROXIES = Regex("(?im)^\\s*proxies\\s*:")
 }

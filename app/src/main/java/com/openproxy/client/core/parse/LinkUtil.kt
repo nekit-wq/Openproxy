@@ -44,8 +44,10 @@ object Base64Codec {
         if (text.contains("://")) return false
         if (!text.all { it.isLetterOrDigit() || it in "+/=_- \n\r\t" }) return false
         val decoded = decode(text) ?: return false
+        val trimmedDecoded = decoded.trimStart()
         return decoded.contains("://") || decoded.contains("[Interface]") ||
-            decoded.trimStart().startsWith("{") || decoded.contains("proxies:")
+            trimmedDecoded.startsWith("{") || trimmedDecoded.startsWith("[") ||
+            decoded.contains("proxies:") || decoded.contains("proxy:")
     }
 }
 
@@ -144,8 +146,9 @@ internal object LinkUtil {
 
     fun parseQuery(raw: String): Map<String, String> {
         if (raw.isBlank()) return emptyMap()
+        val clean = raw.replace("&amp;", "&")
         val map = LinkedHashMap<String, String>()
-        for (pair in raw.split('&')) {
+        for (pair in clean.split('&')) {
             if (pair.isBlank()) continue
             val eq = pair.indexOf('=')
             if (eq < 0) {

@@ -59,13 +59,20 @@ object ShareLinkParser {
             }
         }
 
-        if (payload.startsWith("{")) {
+        if (payload.startsWith("{") || payload.startsWith("[")) {
             SingBoxJsonParser.parse(payload)?.let { return it }
+        }
+
+        if (ClashYamlParser.isClashYaml(payload)) {
+            val batch = ClashYamlParser.parse(payload)
+            if (batch.profiles.isNotEmpty() || batch.errors.isNotEmpty()) {
+                return batch
+            }
         }
 
         val profiles = mutableListOf<ServerProfile>()
         val lines = payload.split('\n', '\r')
-            .map { it.trim() }
+            .map { cleanLink(it) }
             .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("//") }
 
         for (line in lines) {
@@ -83,8 +90,19 @@ object ShareLinkParser {
         return ParseBatch(profiles, errors)
     }
 
+    fun cleanLink(raw: String): String {
+        var link = raw.trim()
+            .trim('"', '\'', '`', '<', '>', '[', ']')
+            .removePrefix("- ")
+            .trim()
+        if (link.contains("&amp;")) {
+            link = link.replace("&amp;", "&")
+        }
+        return link
+    }
+
     fun parseLink(raw: String): ServerProfile? {
-        val link = raw.trim()
+        val link = cleanLink(raw)
         if (link.isEmpty() || !link.contains("://")) return null
         return runCatching {
             when (link.substringBefore("://").lowercase()) {
@@ -116,8 +134,11 @@ object ShareLinkParser {
         val security = q["security"]?.lowercase()?.ifBlank { "none" } ?: "none"
         val network = normalizeNetwork(q["type"])
         val sni = q["sni"] ?: q["peer"] ?: ""
+        val profileName = parts.fragment.ifBlank {
+            q["remarks"] ?: q["name"] ?: q["title"] ?: ""
+        }
         return ServerProfile(
-            name = parts.fragment,
+            name = profileName,
             protocol = Protocol.VLESS,
             address = parts.address,
             port = parts.port.takeIf { it > 0 } ?: 443,
@@ -144,7 +165,7 @@ object ShareLinkParser {
 
     private fun parseVmess(link: String): ServerProfile? {
         val payload = link.substringAfter("://").substringBefore('#').trim()
-        val decoded = Base64Codec.decode(payload)
+        val decoded = Base64Codec.decode(payload) ?: Base64Codec.decode(percentDecode(payload))
         if (decoded != null && decoded.trimStart().startsWith("{")) {
             val obj = runCatching { Json.parseToJsonElement(decoded).jsonObject }.getOrNull()
             if (obj != null) return fromVmessJson(obj, link)
@@ -153,8 +174,11 @@ object ShareLinkParser {
         val parts = LinkUtil.parse(link) ?: return null
         if (parts.userInfo.isBlank()) return null
         val q = parts.query
+        val profileName = parts.fragment.ifBlank {
+            q["remarks"] ?: q["name"] ?: q["title"] ?: ""
+        }
         return ServerProfile(
-            name = parts.fragment,
+            name = profileName,
             protocol = Protocol.VMESS,
             address = parts.address,
             port = parts.port.takeIf { it > 0 } ?: 443,
@@ -208,8 +232,11 @@ object ShareLinkParser {
         val parts = LinkUtil.parse(link) ?: return null
         if (parts.userInfo.isBlank()) return null
         val q = parts.query
+        val profileName = parts.fragment.ifBlank {
+            q["remarks"] ?: q["name"] ?: q["title"] ?: ""
+        }
         return ServerProfile(
-            name = parts.fragment,
+            name = profileName,
             protocol = Protocol.TROJAN,
             address = parts.address,
             port = parts.port.takeIf { it > 0 } ?: 443,
@@ -322,8 +349,11 @@ object ShareLinkParser {
     private fun parseHysteria2(link: String): ServerProfile? {
         val parts = LinkUtil.parse(link) ?: return null
         val q = parts.query
+        val profileName = parts.fragment.ifBlank {
+            q["remarks"] ?: q["name"] ?: q["title"] ?: ""
+        }
         return ServerProfile(
-            name = parts.fragment,
+            name = profileName,
             protocol = Protocol.HYSTERIA2,
             address = parts.address,
             port = parts.port.takeIf { it > 0 } ?: 443,
@@ -366,8 +396,9 @@ object ShareLinkParser {
         val colon = parts.userInfo.indexOf(':')
         val uuid = if (colon > 0) parts.userInfo.substring(0, colon) else parts.userInfo
         val password = if (colon > 0) parts.userInfo.substring(colon + 1) else ""
+        val remarks = q["remarks"] ?: q["name"] ?: q["title"] ?: ""
         return ServerProfile(
-            name = parts.fragment,
+            name = parts.fragment.ifBlank { remarks },
             protocol = Protocol.TUIC,
             address = parts.address,
             port = parts.port.takeIf { it > 0 } ?: 443,
