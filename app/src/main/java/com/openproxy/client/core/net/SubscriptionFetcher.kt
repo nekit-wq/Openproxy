@@ -1,5 +1,6 @@
 package com.openproxy.client.core.net
 
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -16,13 +17,32 @@ class SubscriptionFetcher(
         val finalUrl: String,
     )
 
-    suspend fun fetch(url: String): Response = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", USER_AGENT)
+    suspend fun fetch(
+        url: String,
+        userAgent: String = DEFAULT_USER_AGENT,
+        deviceId: String = "",
+    ): Response = withContext(Dispatchers.IO) {
+        val trimmed = url.trim()
+        val normalizedUrl = when {
+            trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            else -> "https://$trimmed"
+        }
+
+        val requestBuilder = Request.Builder()
+            .url(normalizedUrl)
+            .header("User-Agent", userAgent.ifBlank { DEFAULT_USER_AGENT })
             .header("Accept", "*/*")
-            .build()
-        client.newCall(request).execute().use { response ->
+            .header("Accept-Language", "ru,en;q=0.9")
+
+        if (deviceId.isNotBlank()) {
+            // Remnawave and similar panels require HWID device headers
+            requestBuilder.header("x-hwid", deviceId)
+            requestBuilder.header("x-device-os", "Android")
+            requestBuilder.header("x-ver-os", runCatching { Build.VERSION.RELEASE }.getOrNull() ?: "14")
+            requestBuilder.header("x-device-model", runCatching { Build.MODEL }.getOrNull() ?: "Android")
+        }
+
+        client.newCall(requestBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) {
                 error("Сервер вернул HTTP ${response.code}")
             }
@@ -41,8 +61,8 @@ class SubscriptionFetcher(
     }
 
     companion object {
-        // Some panels serve different payloads depending on the client UA.
-        private const val USER_AGENT = "OpenProxy/1.0 (Android) sing-box"
+        // v2rayNG UA is the universal standard recognized by Remnawave, Marzban, X-UI, V2Board, 3X-UI
+        const val DEFAULT_USER_AGENT = "v2rayNG/1.8.12 (Linux; Android)"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)

@@ -218,14 +218,18 @@ private fun ConnectionHero(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    val downTotal = status.downlinkTotal.takeIf { it > 0L } ?: status.downlink
+                    val upTotal = status.uplinkTotal.takeIf { it > 0L } ?: status.uplink
                     MetricTile(
                         label = "получено",
-                        value = Format.bytes(status.downlink),
+                        value = Format.bytes(downTotal),
+                        caption = if (status.downlink > 0) "↓ ${Format.bytesPerSecond(status.downlink)}" else null,
                         modifier = Modifier.weight(1f),
                     )
                     MetricTile(
                         label = "отправлено",
-                        value = Format.bytes(status.uplink),
+                        value = Format.bytes(upTotal),
+                        caption = if (status.uplink > 0) "↑ ${Format.bytesPerSecond(status.uplink)}" else null,
                         modifier = Modifier.weight(1f),
                     )
                     MetricTile(

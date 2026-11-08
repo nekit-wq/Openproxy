@@ -56,6 +56,8 @@ data class AppSettings(
     val showLatencyInList: Boolean = true,
     val autoUpdateSubscriptions: Boolean = true,
     val language: String = "ru",
+    val subscriptionUserAgent: String = "v2rayNG/1.8.12",
+    val deviceId: String = "",
 ) {
     val dnsServer: String
         get() = if (dnsMode == DnsMode.CUSTOM) customDns.ifBlank { "1.1.1.1" } else dnsMode.url

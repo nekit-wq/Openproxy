@@ -161,6 +161,7 @@ fun MetricTile(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    caption: String? = null,
 ) {
     Surface(
         modifier = modifier,
@@ -183,6 +184,15 @@ fun MetricTile(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (!caption.isNullOrBlank()) {
+                Text(
+                    text = caption,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

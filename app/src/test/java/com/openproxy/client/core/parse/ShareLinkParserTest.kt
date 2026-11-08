@@ -107,4 +107,20 @@ class ShareLinkParserTest {
         assertEquals("4", profile.awg["jc"])
         assertTrue(profile.awg.containsKey("h1"))
     }
+
+    @Test
+    fun rejectsAppNotSupportedDummyResponse() {
+        val dummyText = "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:443?security=none#App%20not%20supported"
+        val batch = SubscriptionParser.parseBody(dummyText)
+        assertTrue(batch.isEmpty)
+        assertTrue(batch.errors.any { it.contains("App not supported") })
+    }
+
+    @Test
+    fun rejectsPlainTextAppNotSupported() {
+        val plainText = "App not supported"
+        val batch = SubscriptionParser.parseBody(plainText)
+        assertTrue(batch.isEmpty)
+        assertTrue(batch.errors.any { it.contains("App not supported") })
+    }
 }

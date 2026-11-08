@@ -16,16 +16,24 @@ import com.openproxy.client.core.model.VpnStatus
 import com.openproxy.client.core.singbox.ClashApiClient
 import com.openproxy.client.core.singbox.SingBoxConfigBuilder
 import com.openproxy.client.core.singbox.SingBoxRuntime
+import io.nekohasekai.libbox.CommandClient
+import io.nekohasekai.libbox.CommandClientHandler
+import io.nekohasekai.libbox.CommandClientOptions
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
+import io.nekohasekai.libbox.ConnectionEvents
 import io.nekohasekai.libbox.ConnectionOwner
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
+import io.nekohasekai.libbox.LogIterator
 import io.nekohasekai.libbox.NetworkInterfaceIterator
 import io.nekohasekai.libbox.Notification
+import io.nekohasekai.libbox.OutboundGroupItemIterator
+import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.PlatformInterface
+import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.SystemProxyStatus
 import io.nekohasekai.libbox.TunOptions
@@ -53,10 +61,11 @@ import java.util.UUID
  * the Android TUN file descriptor through [PlatformInterface.openTun], protects outgoing
  * sockets, and mirrors live status to the UI.
  */
-class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
+class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler, CommandClientHandler {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var commandServer: CommandServer? = null
+    private var commandClient: CommandClient? = null
     private var trafficJob: Job? = null
     private var clashPort = 0
     private var clashSecret = ""
@@ -139,6 +148,7 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 ),
             )
             appendLog("Туннель поднят: ${profile.title} (${profile.protocol.title})")
+            startCommandClient()
             startTrafficPolling()
         } catch (t: Throwable) {
             Log.e(TAG, "connect failed", t)
@@ -149,6 +159,8 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                     error = t.message ?: "Не удалось запустить туннель",
                 ),
             )
+            runCatching { commandClient?.disconnect() }
+            commandClient = null
             runCatching { commandServer?.close() }
             commandServer = null
             NotificationManagerCompat.from(this)
@@ -159,19 +171,50 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         }
     }
 
+    private fun startCommandClient() {
+        runCatching { commandClient?.disconnect() }
+        commandClient = null
+        scope.launch {
+            delay(500)
+            runCatching {
+                val options = CommandClientOptions().apply {
+                    statusInterval = 1_000_000_000L
+                    addCommand(Libbox.CommandStatus)
+                    addCommand(Libbox.CommandLog)
+                }
+                val client = Libbox.newCommandClient(this@ProxyVpnService, options)
+                client.connect()
+                commandClient = client
+                Log.i(TAG, "Libbox CommandClient connected successfully")
+            }.onFailure {
+                Log.w(TAG, "Libbox CommandClient connection failed: ${it.message}")
+            }
+        }
+    }
+
     private fun startTrafficPolling() {
         trafficJob?.cancel()
         trafficJob = scope.launch {
             val client = ClashApiClient(clashPort, clashSecret)
+            var totalUp = 0L
+            var totalDown = 0L
             while (isActive) {
                 try {
                     client.trafficFlow().collect { (up, down) ->
+                        totalUp += up
+                        totalDown += down
                         statusMutable.update { current ->
-                            current.copy(uplink = up, downlink = down)
+                            current.copy(
+                                uplink = up,
+                                downlink = down,
+                                uplinkTotal = if (current.uplinkTotal > 0L) current.uplinkTotal else totalUp,
+                                downlinkTotal = if (current.downlinkTotal > 0L) current.downlinkTotal else totalDown,
+                            )
                         }
                     }
                 } catch (t: Throwable) {
                     if (t is kotlinx.coroutines.CancellationException) throw t
+                    Log.d(TAG, "Clash traffic polling error: ${t.message}")
                 }
                 delay(1500)
             }
@@ -181,6 +224,8 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private suspend fun disconnect() {
         trafficJob?.cancel()
         trafficJob = null
+        runCatching { commandClient?.disconnect() }
+        commandClient = null
         runCatching { commandServer?.closeService() }
         runCatching { commandServer?.close() }
         commandServer = null
@@ -200,10 +245,60 @@ class ProxyVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     override fun onDestroy() {
         trafficJob?.cancel()
+        runCatching { commandClient?.disconnect() }
+        commandClient = null
         runCatching { commandServer?.close() }
         commandServer = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    // ------------------------------------------------ libbox CommandClientHandler
+
+    override fun clearLogs() {
+        logsMutable.value = emptyList()
+    }
+
+    override fun connected() {
+        Log.i(TAG, "CommandClient connected")
+    }
+
+    override fun disconnected(message: String?) {
+        Log.i(TAG, "CommandClient disconnected: $message")
+    }
+
+    override fun initializeClashMode(iterator: StringIterator?, defaultMode: String?) {}
+
+    override fun setDefaultLogLevel(level: Int) {}
+
+    override fun updateClashMode(mode: String?) {}
+
+    override fun writeConnectionEvents(events: ConnectionEvents?) {}
+
+    override fun writeGroups(iterator: OutboundGroupIterator?) {}
+
+    override fun writeLogs(iterator: LogIterator?) {
+        if (iterator == null) return
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry != null && entry.message.isNotBlank()) {
+                appendLog(entry.message)
+            }
+        }
+    }
+
+    override fun writeOutbounds(iterator: OutboundGroupItemIterator?) {}
+
+    override fun writeStatus(message: StatusMessage?) {
+        if (message == null) return
+        statusMutable.update { current ->
+            current.copy(
+                uplink = message.uplink,
+                downlink = message.downlink,
+                uplinkTotal = message.uplinkTotal,
+                downlinkTotal = message.downlinkTotal,
+            )
+        }
     }
 
     // ------------------------------------------------------- Android TUN fd

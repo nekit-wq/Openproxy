@@ -19,10 +19,18 @@ import kotlinx.serialization.json.jsonPrimitive
 object SingBoxJsonParser {
 
     fun parse(text: String): ParseBatch? {
-        val root = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return null
+        val element = runCatching { Json.parseToJsonElement(text) }.getOrNull() ?: return null
         val objects = mutableListOf<JsonObject>()
-        root["outbounds"]?.asArray()?.forEach { objects += it }
-        root["endpoints"]?.asArray()?.forEach { objects += it }
+        when (element) {
+            is JsonObject -> {
+                element["outbounds"]?.asArray()?.forEach { objects += it }
+                element["endpoints"]?.asArray()?.forEach { objects += it }
+            }
+            is JsonArray -> {
+                element.forEach { if (it is JsonObject) objects += it }
+            }
+            else -> return null
+        }
         if (objects.isEmpty()) return null
 
         val profiles = objects.mapNotNull { parseNode(it) }

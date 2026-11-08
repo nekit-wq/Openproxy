@@ -32,6 +32,16 @@ object SubscriptionParser {
                 ),
             )
         }
+        if (trimmed.equals("app not supported", ignoreCase = true) ||
+            trimmed.equals("app not suported", ignoreCase = true) ||
+            (trimmed.contains("not support", ignoreCase = true) && !trimmed.contains("://"))
+        ) {
+            return ParseBatch(
+                errors = listOf(
+                    "Сервер подписки отклонил запрос (App not supported). Панель требует поддерживаемый клиент или превышен лимит устройств HWID.",
+                ),
+            )
+        }
         if (CLASH_PROXIES.containsMatchIn(trimmed)) {
             return ParseBatch(
                 errors = listOf(
@@ -39,7 +49,22 @@ object SubscriptionParser {
                 ),
             )
         }
-        return ShareLinkParser.parseMany(trimmed)
+        val batch = ShareLinkParser.parseMany(trimmed)
+        // Filter out dummy error nodes returned by panels when unauthorized (e.g. vless://...@127.0.0.1#App not supported)
+        val validProfiles = batch.profiles.filterNot { profile ->
+            val isDummyAddress = profile.address == "127.0.0.1" || profile.address == "0.0.0.0" || profile.address.contains("dummy")
+            val isUnsupportedName = profile.name.contains("not support", ignoreCase = true) ||
+                profile.name.contains("не поддерживается", ignoreCase = true) ||
+                profile.name.contains("unsupported", ignoreCase = true)
+            isDummyAddress && isUnsupportedName
+        }
+        val hadDummy = validProfiles.size < batch.profiles.size
+        val extraErrors = if (hadDummy && validProfiles.isEmpty()) {
+            listOf("Сервер подписки вернул заглушку 'App not supported'. Панель отклонила запрос или исчерпан лимит устройств.")
+        } else {
+            emptyList()
+        }
+        return ParseBatch(validProfiles, batch.errors + extraErrors)
     }
 
     fun parseMeta(headers: Map<String, String>): SubscriptionMeta {

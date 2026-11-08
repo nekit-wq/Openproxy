@@ -139,9 +139,21 @@ class AppRepository(
         }
     }
 
+    private suspend fun obtainDeviceId(): String {
+        val currentSettings = settings.value
+        if (currentSettings.deviceId.isNotBlank()) {
+            return currentSettings.deviceId
+        }
+        val generated = UUID.randomUUID().toString()
+        updateSettings { it.copy(deviceId = generated) }
+        return generated
+    }
+
     suspend fun addSubscription(url: String): Result<Subscription> = withContext(Dispatchers.IO) {
         try {
-            val response = fetcher.fetch(url)
+            val deviceId = obtainDeviceId()
+            val currentSettings = settings.value
+            val response = fetcher.fetch(url, currentSettings.subscriptionUserAgent, deviceId)
             val meta = SubscriptionParser.parseMeta(response.headers)
             val batch = SubscriptionParser.parseBody(response.body)
             if (batch.isEmpty) {
@@ -193,7 +205,9 @@ class AppRepository(
         val current = subscriptions.value.firstOrNull { it.id == id }
             ?: return@withContext Result.failure(IllegalArgumentException("Подписка не найдена"))
         try {
-            val response = fetcher.fetch(current.url)
+            val deviceId = obtainDeviceId()
+            val currentSettings = settings.value
+            val response = fetcher.fetch(current.url, currentSettings.subscriptionUserAgent, deviceId)
             val meta = SubscriptionParser.parseMeta(response.headers)
             val batch = SubscriptionParser.parseBody(response.body)
             if (batch.isEmpty) {

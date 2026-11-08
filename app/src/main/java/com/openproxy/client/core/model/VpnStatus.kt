@@ -11,6 +11,8 @@ data class VpnStatus(
     val since: Long = 0L,
     val uplink: Long = 0L,
     val downlink: Long = 0L,
+    val uplinkTotal: Long = 0L,
+    val downlinkTotal: Long = 0L,
     val error: String? = null,
     val coreVersion: String = "",
 ) {
